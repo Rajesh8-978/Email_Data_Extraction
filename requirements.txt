@@ -1,0 +1,17 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# API service
+presidio-analyzer==2.2.360
+flask==3.0.3
+gunicorn==22.0.0
+
+# GLiNER / transformer model runtime
+gliner==0.2.13
+transformers==4.44.2
+torch==2.4.1+cpu
+sentencepiece==0.2.1
+onnxruntime==1.27.0
+
+# PDF extraction script
+pypdf==5.7.0
+requests==2.32.4

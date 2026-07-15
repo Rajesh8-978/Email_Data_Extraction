@@ -1,0 +1,22 @@
+services:
+  presidio-singapore:
+    build: .
+    container_name: presidio-singapore
+    ports:
+      - "5001:3000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HF_HOME=/models/huggingface
+      - TORCH_HOME=/models/torch
+    volumes:
+      - presidio_models:/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 180s
+
+volumes:
+  presidio_models:

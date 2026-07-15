@@ -1,0 +1,16 @@
+.venv/
+.venv312/
+__pycache__/
+*.pyc
+
+# Generated/local data
+pdfs/
+pdf_extracted_entities.json
+analyze_output.json
+email_entity_link.json
+email_extracted_entities.json
+
+# Local/editor files
+.env
+.vscode/
+.idea/
