@@ -38,10 +38,10 @@ def business_recognizers():
         supported_entity="BANKRUPTCY_NUMBER",
         patterns=[Pattern(
             name="bankruptcy_case_number",
-            regex=r"\b[A-Z]{0,4}[/ -]?\d{1,6}(?:[/ -]\d{2,4})?\b",
+            regex=r"\b(?:HC[/ -]?)?B[/ -]?\d{2,6}[/ -]?\d{4}\b",
             score=0.78,
         )],
-        context=["bankruptcy", "bankrupt", "insolvency", "case number", "case no"],
+        context=["hc/b", "bankruptcy", "bankrupt", "insolvency", "case number", "case no"],
     )
 
     phone_number = PatternRecognizer(
