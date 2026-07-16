@@ -5,7 +5,9 @@ import json
 
 
 PDF_FOLDER = Path("pdfs")
-API_URL = "http://localhost:5001/analyze"
+ANALYZE_API_URL = "http://localhost:5001/analyze"
+ANONYMIZE_API_URL = "http://localhost:5001/anonymize"
+API_TIMEOUT_SECONDS = 600
 
 # Same entity types as ENTITY_RULES in entity_rules.py.
 # One PDF will produce one output object with these fields.
@@ -63,6 +65,7 @@ def unique_values(items):
 
 
 all_results = []
+all_anonymized_results = []
 
 pdf_files = sorted(PDF_FOLDER.glob("*.pdf"))
 print(f"PDF files found: {len(pdf_files)}")
@@ -73,19 +76,32 @@ for email_message_id, pdf in enumerate(pdf_files, start=1):
     text = read_pdf_text(pdf)
     print(f"Text length: {len(text)}")
 
-    response = requests.post(
-        API_URL,
+    analyze_response = requests.post(
+        ANALYZE_API_URL,
         json={
             "text": text,
             "language": "en",
             "entities": TARGET_ENTITIES,
         },
-        timeout=120,
+        timeout=API_TIMEOUT_SECONDS,
     )
 
-    response.raise_for_status()
-    entities = response.json()["entities"]
+    analyze_response.raise_for_status()
+    entities = analyze_response.json()["entities"]
     print(f"Entities found: {len(entities)}")
+
+    anonymize_response = requests.post(
+        ANONYMIZE_API_URL,
+        json={
+            "text": text,
+            "language": "en",
+            "entities": TARGET_ENTITIES,
+        },
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    anonymize_response.raise_for_status()
+    anonymized_data = anonymize_response.json()
 
     grouped = {entity_type: [] for entity_type in TARGET_ENTITIES}
     details = {entity_type: [] for entity_type in TARGET_ENTITIES}
@@ -119,8 +135,19 @@ for email_message_id, pdf in enumerate(pdf_files, start=1):
 
     all_results.append(pdf_result)
 
+    all_anonymized_results.append({
+        "EmailMessageId": email_message_id,
+        "SourceFileName": pdf.name,
+        "AnonymizedText": anonymized_data["anonymized_text"],
+        "AnonymizedItemCount": len(anonymized_data["items"]),
+    })
+
 with open("pdf_extracted_entities.json", "w", encoding="utf-8") as f:
     json.dump(all_results, f, indent=4, ensure_ascii=False)
 
+with open("pdf_anonymized_text.json", "w", encoding="utf-8") as f:
+    json.dump(all_anonymized_results, f, indent=4, ensure_ascii=False)
+
 print(f"\nDone. Total PDF outputs: {len(all_results)}")
 print("Saved to pdf_extracted_entities.json")
+print("Saved to pdf_anonymized_text.json")

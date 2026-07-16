@@ -4,6 +4,12 @@ This project extracts useful business entities from PDF email records.
 
 It reads PDF files, sends the text to a local Presidio + GLiNER API, applies custom validation rules, and saves clean extracted data into JSON.
 
+It also supports anonymizing detected entities.
+
+General entities are replaced with tags such as `<PERSON>` or `<EMAIL_ADDRESS>`.
+
+Fixed-format sensitive entities are masked with only the first 2 and last 2 characters visible.
+
 ## What it extracts
 
 The system can extract:
@@ -63,6 +69,18 @@ entity_rules.py checks conditions
 entity_collector.py cleans and removes duplicates
    ↓
 pdf_extracted_entities.json is created
+```
+
+For anonymization:
+
+```text
+Text is sent to /anonymize
+   ↓
+Entities are detected and validated
+   ↓
+Sensitive values are replaced or masked based on entity type
+   ↓
+Anonymized text is returned
 ```
 
 ## Setup
@@ -168,6 +186,36 @@ List supported entity types:
 
 ```text
 http://localhost:5001/entity-types
+```
+
+Anonymize text directly:
+
+```powershell
+curl -X POST http://localhost:5001/anonymize `
+  -H "Content-Type: application/json" `
+  -d "{\"text\":\"Dear John Tan, call me at +6590681834. Case HC/B/668/2024.\",\"language\":\"en\"}"
+```
+
+Example anonymized output:
+
+```text
+Dear <PERSON>, call me at +6*******34. Case HC*********24.
+```
+
+Anonymization policy:
+
+```text
+Replace:
+EMAIL_ADDRESS, EMAIL_DATE, DATE_TIME, PERSON, URL, LOCATION,
+JOB_TITLE, ORGANIZATION, CREDITOR_NAME, BANKRUPT_NAME,
+LAW_FIRM, GOVERNMENT_AGENCY
+
+Mask:
+BANK_ACCOUNT_NUMBER, BANKRUPTCY_NUMBER, SG_VEHICLE_NUMBER,
+SG_NRIC_FIN, PHONE_NUMBER, PASSPORT_NUMBER
+
+Hash:
+Not used currently
 ```
 
 ## Adding a new entity

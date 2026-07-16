@@ -4,12 +4,73 @@ from typing import Iterable
 from entity_rules import ENTITY_RULES
 
 
+ENTITY_PRIORITY = {
+    "SG_NRIC_FIN": 100,
+    "PASSPORT_NUMBER": 95,
+    "BANK_ACCOUNT_NUMBER": 90,
+    "BANKRUPTCY_NUMBER": 90,
+    "SG_VEHICLE_NUMBER": 90,
+    "PHONE_NUMBER": 90,
+    "EMAIL_ADDRESS": 85,
+    "URL": 80,
+    "BANKRUPT_NAME": 78,
+    "CREDITOR_NAME": 76,
+    "GOVERNMENT_AGENCY": 74,
+    "LAW_FIRM": 72,
+    "ORGANIZATION": 70,
+    "PERSON": 60,
+    "EMAIL_DATE": 55,
+    "DATE_TIME": 50,
+    "LOCATION": 40,
+    "JOB_TITLE": 35,
+}
+
+
 def _context(text: str, start: int, end: int, radius: int = 80) -> str:
     return text[max(0, start - radius):min(len(text), end + radius)]
 
 
-def collect_entities(text: str, results: Iterable, requested_entities=None) -> list[dict]:
-    """Validate, normalize and deduplicate Presidio/GLiNER candidates."""
+def _overlaps(left: dict, right: dict) -> bool:
+    return left["start"] < right["end"] and right["start"] < left["end"]
+
+
+def _priority(item: dict) -> tuple:
+    return (
+        ENTITY_PRIORITY.get(item["entity_type"], 0),
+        item["end"] - item["start"],
+        item["confidence"],
+    )
+
+
+def _remove_overlaps(entities: list[dict]) -> list[dict]:
+    selected = []
+    for item in sorted(
+        entities,
+        key=lambda entity: (
+            -ENTITY_PRIORITY.get(entity["entity_type"], 0),
+            -(entity["end"] - entity["start"]),
+            -entity["confidence"],
+            entity["start"],
+        ),
+    ):
+        existing_index = next(
+            (index for index, chosen in enumerate(selected) if _overlaps(item, chosen)),
+            None,
+        )
+        if existing_index is None:
+            selected.append(item)
+        elif _priority(item) > _priority(selected[existing_index]):
+            selected[existing_index] = item
+    return sorted(selected, key=lambda item: (item["start"], item["entity_type"]))
+
+
+def collect_entities(
+    text: str,
+    results: Iterable,
+    requested_entities=None,
+    deduplicate: bool = True,
+) -> list[dict]:
+    """Validate, normalize and optionally deduplicate Presidio/GLiNER candidates."""
     allowed = set(requested_entities or ENTITY_RULES)
     accepted = []
 
@@ -34,6 +95,9 @@ def collect_entities(text: str, results: Iterable, requested_entities=None) -> l
             "context": context,
         })
 
+    if not deduplicate:
+        return sorted(accepted, key=lambda item: (item["start"], item["end"], item["entity_type"]))
+
     # Keep the strongest result for the same type and normalized value.
     strongest = {}
     for item in accepted:
@@ -42,7 +106,7 @@ def collect_entities(text: str, results: Iterable, requested_entities=None) -> l
         if previous is None or item["confidence"] > previous["confidence"]:
             strongest[key] = item
 
-    return sorted(strongest.values(), key=lambda item: (item["start"], item["entity_type"]))
+    return _remove_overlaps(list(strongest.values()))
 
 
 def group_entities(entities: list[dict]) -> dict[str, list[dict]]:
@@ -50,4 +114,3 @@ def group_entities(entities: list[dict]) -> dict[str, list[dict]]:
     for entity in entities:
         grouped[entity["entity_type"]].append(entity)
     return dict(grouped)
-

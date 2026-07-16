@@ -64,4 +64,53 @@ def business_recognizers():
         ],
     )
 
-    return [email_date, bank_account, bankruptcy_number, phone_number]
+    url = PatternRecognizer(
+        supported_entity="URL",
+        patterns=[
+            Pattern(
+                name="url",
+                regex=r"\bhttps?://[^\s<>()]+|\bwww\.[^\s<>()]+",
+                score=0.86,
+            )
+        ],
+        context=["website", "web", "url", "visit", "refer"],
+    )
+
+    email_header_person = PatternRecognizer(
+        supported_entity="PERSON",
+        patterns=[
+            Pattern(
+                name="agent_name",
+                regex=r"(?<=\bAgent\n)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}",
+                score=0.86,
+            ),
+            Pattern(
+                name="by_name_on",
+                regex=r"(?<=\bby\s)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}(?=\s+on\s)",
+                score=0.86,
+            ),
+            Pattern(
+                name="regards_name",
+                regex=r"(?<=\bRegards,\n)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}",
+                score=0.84,
+            ),
+            Pattern(
+                name="regards_name_no_comma",
+                regex=r"(?<=\bRegards\n)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}",
+                score=0.84,
+            ),
+            Pattern(
+                name="best_regards_name",
+                regex=r"(?<=\bBest regards,\n)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}",
+                score=0.84,
+            ),
+            Pattern(
+                name="dear_name",
+                regex=r"(?<=\bDear\s)[A-Z][A-Za-z'’.-]+(?:[ \t]+[A-Z][A-Za-z'’.-]+){0,5}",
+                score=0.82,
+            ),
+        ],
+        context=["agent", "by", "dear", "regards", "from", "to"],
+    )
+
+    return [email_date, bank_account, bankruptcy_number, phone_number, url, email_header_person]
