@@ -2,10 +2,10 @@ from pathlib import Path
 from pypdf import PdfReader
 import requests
 import json
+import re
 
 
 PDF_FOLDER = Path("pdfs")
-ANALYZE_API_URL = "http://localhost:5001/analyze"
 ANONYMIZE_API_URL = "http://localhost:5001/anonymize"
 API_TIMEOUT_SECONDS = 600
 
@@ -45,7 +45,58 @@ def read_pdf_text(pdf_path: Path) -> str:
     return "\n".join(text_parts)
 
 
-def unique_values(items):
+def _person_parts(value):
+    return set(re.findall(r"[a-z]+", value.casefold()))
+
+
+def deduplicate_person_values(values, reference_values=None):
+    """Keep full names and remove shorter aliases such as 'Shanel'."""
+    compact_values = {}
+    compact_order = []
+
+    for value in values:
+        compact_key = re.sub(r"[^a-z]", "", value.casefold())
+        previous = compact_values.get(compact_key)
+        if previous is None:
+            compact_values[compact_key] = value
+            compact_order.append(compact_key)
+        elif len(value.split()) > len(previous.split()):
+            compact_values[compact_key] = value
+
+    candidates = [compact_values[key] for key in compact_order]
+    references = list(reference_values or [])
+    filtered = []
+
+    for candidate in candidates:
+        parts = _person_parts(candidate)
+        is_short_alias = any(
+            parts < _person_parts(other)
+            for other in candidates
+            if other != candidate
+        )
+        is_specific_entity_duplicate = any(
+            parts <= _person_parts(other)
+            for other in references
+        )
+        if not is_short_alias and not is_specific_entity_duplicate:
+            filtered.append(candidate)
+
+    return filtered
+
+
+def deduplicate_format_variants(values):
+    """Collapse punctuation/case variants of the same named entity."""
+    seen = set()
+    deduplicated = []
+    for value in values:
+        key = re.sub(r"[^a-z0-9]", "", value.casefold())
+        if key and key not in seen:
+            seen.add(key)
+            deduplicated.append(value)
+    return deduplicated
+
+
+def unique_values(items, entity_type=None):
     seen = set()
     values = []
 
@@ -61,6 +112,12 @@ def unique_values(items):
         seen.add(key)
         values.append(value)
 
+    if entity_type == "PERSON":
+        return deduplicate_person_values(values)
+    if entity_type in {
+        "ORGANIZATION", "CREDITOR_NAME", "LAW_FIRM", "GOVERNMENT_AGENCY"
+    }:
+        return deduplicate_format_variants(values)
     return values
 
 
@@ -76,20 +133,6 @@ for email_message_id, pdf in enumerate(pdf_files, start=1):
     text = read_pdf_text(pdf)
     print(f"Text length: {len(text)}")
 
-    analyze_response = requests.post(
-        ANALYZE_API_URL,
-        json={
-            "text": text,
-            "language": "en",
-            "entities": TARGET_ENTITIES,
-        },
-        timeout=API_TIMEOUT_SECONDS,
-    )
-
-    analyze_response.raise_for_status()
-    entities = analyze_response.json()["entities"]
-    print(f"Entities found: {len(entities)}")
-
     anonymize_response = requests.post(
         ANONYMIZE_API_URL,
         json={
@@ -102,6 +145,8 @@ for email_message_id, pdf in enumerate(pdf_files, start=1):
 
     anonymize_response.raise_for_status()
     anonymized_data = anonymize_response.json()
+    entities = anonymized_data["entities"]
+    print(f"Entities found: {len(entities)}")
 
     grouped = {entity_type: [] for entity_type in TARGET_ENTITIES}
     details = {entity_type: [] for entity_type in TARGET_ENTITIES}
@@ -121,7 +166,12 @@ for email_message_id, pdf in enumerate(pdf_files, start=1):
         })
 
     for entity_type in TARGET_ENTITIES:
-        grouped[entity_type] = unique_values(details[entity_type])
+        grouped[entity_type] = unique_values(details[entity_type], entity_type)
+
+    grouped["PERSON"] = deduplicate_person_values(
+        grouped["PERSON"],
+        reference_values=grouped["BANKRUPT_NAME"],
+    )
 
     pdf_result = {
         "EmailMessageId": email_message_id,

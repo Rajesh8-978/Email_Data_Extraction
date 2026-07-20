@@ -1,286 +1,256 @@
-# Email Data Extraction
+# Email Data Extraction and Anonymization
 
-This project extracts useful business entities from PDF email records.
+This project extracts and anonymizes business entities from email text stored in PDF files. It is designed for Singapore-specific identifiers while also supporting general entities such as people, email addresses, dates, locations, organizations, and URLs.
 
-It reads PDF files, sends the text to a local Presidio + GLiNER API, applies custom validation rules, and saves clean extracted data into JSON.
+The application combines:
 
-It also supports anonymizing detected entities.
+- Microsoft Presidio as the entity-analysis framework.
+- GLiNER as the AI named-entity model.
+- Regular-expression recognizers for structured and Singapore-specific values.
+- Validation and normalization rules to reject weak or incorrect detections.
+- A Flask API and browser interface for analysis and anonymization.
 
-General entities are replaced with tags such as `<PERSON>` or `<EMAIL_ADDRESS>`.
+## Supported entities
 
-Fixed-format sensitive entities are masked with only the first 2 and last 2 characters visible.
+- `EMAIL_ADDRESS`
+- `EMAIL_DATE`
+- `DATE_TIME`
+- `PERSON`
+- `BANK_ACCOUNT_NUMBER`
+- `BANKRUPTCY_NUMBER`
+- `SG_VEHICLE_NUMBER`
+- `SG_NRIC_FIN`
+- `PHONE_NUMBER`
+- `PASSPORT_NUMBER`
+- `URL`
+- `LOCATION`
+- `JOB_TITLE`
+- `ORGANIZATION`
+- `CREDITOR_NAME`
+- `BANKRUPT_NAME`
+- `LAW_FIRM`
+- `GOVERNMENT_AGENCY`
 
-## What it extracts
+The recognizers include protection for PDF-extracted email addresses containing spaces, addresses split across lines, Singapore telephone numbers, NRIC/FIN values, vehicle numbers, and bankruptcy formats such as `HC/B/668/2024`, `B/668/2024`, and `HC 1394/2023`.
 
-The system can extract:
+## Anonymization policy
 
-- Email addresses
-- Email dates
-- Date/time values
-- Person names
-- Bank account numbers
-- Bankruptcy/case numbers
-- Singapore vehicle numbers
-- Singapore NRIC/FIN numbers
-- Phone/mobile numbers
-- Passport numbers
-- URLs
-- Locations
-- Job titles
-- Organizations
-- Creditor names
-- Bankrupt names
-- Law firms
-- Government agencies
+General entities are replaced with readable tags:
+
+```text
+John Tan                 -> <PERSON>
+john@example.com         -> <EMAIL_ADDRESS>
+RSM Corporate Advisory  -> <ORGANIZATION>
+```
+
+Fixed-format private identifiers are masked. Only the first two and last two characters remain visible:
+
+```text
+SMD4125Y       -> SM****5Y
+S1234567D      -> S1*****7D
+1234567890     -> 12******90
+HC/B/668/2024  -> HC*********24
+```
+
+Masked entity types:
+
+- `BANK_ACCOUNT_NUMBER`
+- `BANKRUPTCY_NUMBER`
+- `SG_VEHICLE_NUMBER`
+- `SG_NRIC_FIN`
+- `PHONE_NUMBER`
+- `PASSPORT_NUMBER`
+
+All other supported entities are replaced. Hashing is not currently used.
+
+The final safety pass also masks labelled identifiers such as policy numbers, UENs, authentication numbers, feedback numbers, company numbers, and reference numbers. Repeated detected values and safe person-name aliases are anonymized throughout the document.
 
 ## Project structure
 
 ```text
-.
-├── app.py                         # API service
-├── proces_pdfs.py                 # Reads PDFs and saves JSON output
-├── entity_rules.py                # Conditions/validation for each entity
-├── entity_collector.py            # Cleans, validates, deduplicates entities
-├── recognizers/
-│   ├── business_recognizers.py    # Bank, phone, date, bankruptcy patterns
-│   ├── gliner_recognizer.py       # AI-based entity recognizer
-│   └── singapore_recognizers.py   # Singapore-specific recognizers
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-└── ENTITY_GUIDE.md
+app.py
+entity_collector.py
+entity_rules.py
+proces_pdfs.py
+recognizers/
+  business_recognizers.py
+  gliner_recognizer.py
+  singapore_recognizers.py
+templates/
+  index.html
+static/
+  styles.css
+Dockerfile
+docker-compose.yml
+requirements.txt
+ENTITY_GUIDE.md
 ```
 
-## How it works
-
-Simple flow:
+## Processing flow
 
 ```text
 PDF files
-   ↓
-proces_pdfs.py reads PDF text
-   ↓
-Text is sent to the API
-   ↓
-Presidio + GLiNER detect possible entities
-   ↓
-entity_rules.py checks conditions
-   ↓
-entity_collector.py cleans and removes duplicates
-   ↓
-pdf_extracted_entities.json is created
+  -> pypdf extracts text
+  -> proces_pdfs.py sends text to the local API
+  -> Presidio runs pattern recognizers and GLiNER
+  -> entity_rules.py validates and normalizes candidates
+  -> entity_collector.py removes duplicates and overlaps
+  -> the API replaces or masks detected private data
+  -> two JSON output files are written
 ```
 
-For anonymization:
+GLiNER processes long documents in overlapping chunks so entities near chunk boundaries are not lost. When detections overlap, the most specific, longest, highest-confidence entity is retained.
 
-```text
-Text is sent to /anonymize
-   ↓
-Entities are detected and validated
-   ↓
-Sensitive values are replaced or masked based on entity type
-   ↓
-Anonymized text is returned
-```
+## Prerequisites
 
-## Setup
+- Docker Desktop for running the API.
+- Python 3.11 or 3.12 for running `proces_pdfs.py` on the host computer.
+- At least several gigabytes of free disk space for the Docker image and downloaded language models.
 
-Create and activate a Python virtual environment if needed.
+The first Docker startup can take several minutes because spaCy and GLiNER model files are downloaded and loaded. The named Docker volume `presidio_models` keeps the model cache for later starts.
 
-Install requirements:
+## Setup with Docker
+
+Open PowerShell in the project folder and run:
 
 ```powershell
-pip install -r requirements.txt
+docker compose up -d --build
 ```
 
-## Run the API
-
-Start the Docker API:
+Check the container:
 
 ```powershell
-docker compose up --build
+docker compose ps
 ```
 
-The API will run at:
+Wait until the status is `healthy`. The service is then available at:
 
-```text
-http://localhost:5001
+- Browser interface: <http://localhost:5001/>
+- Health check: <http://localhost:5001/health>
+- Analyze API: <http://localhost:5001/analyze>
+- Anonymize API: <http://localhost:5001/anonymize>
+- Entity list: <http://localhost:5001/entity-types>
+
+Docker publishes host port `5001` to application port `3000` inside the container. The PDF processor connects to Docker through `http://localhost:5001/anonymize`.
+
+## Python environment for PDF processing
+
+The Docker container runs the API, but `proces_pdfs.py` runs on the host. Create a virtual environment once:
+
+```powershell
+py -3.12 -m venv .venv312
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv312\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Health check:
+For later sessions, only activate the existing environment:
 
-```text
-http://localhost:5001/health
+```powershell
+.\.venv312\Scripts\Activate.ps1
 ```
 
 ## Process PDFs
 
-Put PDF files inside a folder named:
-
-```text
-pdfs
-```
-
-Then run:
+1. Place the source files inside the `pdfs` folder.
+2. Make sure the Docker container is healthy.
+3. Run:
 
 ```powershell
 python proces_pdfs.py
 ```
 
-The output will be saved as:
+The script creates exactly one main result object per PDF in both files:
 
-```text
-pdf_extracted_entities.json
-```
+- `pdf_extracted_entities.json` contains grouped, normalized entity values.
+- `pdf_anonymized_text.json` contains the complete readable anonymized text.
 
-## Output format
+Seven PDF input files therefore produce seven main JSON objects in each output file.
 
-The output is one JSON object per PDF.
+## Browser interface
 
-Example:
+Open <http://localhost:5001/>. You can:
 
-```json
-[
-  {
-    "EmailMessageId": 1,
-    "SourceFileName": "Vehicle - 2.pdf",
-    "ExtractionEngine": "presidio-analyzer",
-    "ModelName": "gliner + pattern recognizers",
-    "LanguageCode": "en",
-    "TotalEntitiesFound": 13,
-    "EMAIL_ADDRESS": [],
-    "EMAIL_DATE": ["16 June 2026"],
-    "DATE_TIME": ["2:30 PM", "16 June 2026"],
-    "PERSON": ["Ms Kamila", "Lin Yueh Hung"],
-    "BANK_ACCOUNT_NUMBER": [],
-    "BANKRUPTCY_NUMBER": ["B/668/2024"],
-    "SG_VEHICLE_NUMBER": ["SMD4125Y"],
-    "SG_NRIC_FIN": [],
-    "PHONE_NUMBER": [],
-    "PASSPORT_NUMBER": [],
-    "URL": [],
-    "LOCATION": [],
-    "JOB_TITLE": ["Executive"],
-    "ORGANIZATION": [],
-    "CREDITOR_NAME": [],
-    "BANKRUPT_NAME": ["Mr Lin Yueh Hung"],
-    "LAW_FIRM": [],
-    "GOVERNMENT_AGENCY": ["LAND TRANSPORT AUTHORITY OF SINGAPORE"]
-  }
-]
-```
+- Paste plain text and send it to the anonymization API.
+- Paste the contents of `pdf_anonymized_text.json`.
+- Switch between PDF results using document tabs.
+- Read the complete anonymized text.
+- See replaced values highlighted in blue and masked values highlighted in yellow.
+- Copy the selected anonymized document.
 
-If 7 PDFs are processed, the output will contain 7 main JSON objects.
+## API examples
 
-## API usage
-
-Analyze text directly:
+Analyze text:
 
 ```powershell
-curl -X POST http://localhost:5001/analyze `
-  -H "Content-Type: application/json" `
-  -d "{\"text\":\"Tel: +6590681834. Vehicle SMD4125Y. Case HC/B/668/2024.\",\"language\":\"en\"}"
+$body = @{
+    text = "Email john@example.com. Vehicle SMD4125Y. Case HC/B/668/2024."
+    language = "en"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:5001/analyze" `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-List supported entity types:
-
-```text
-http://localhost:5001/entity-types
-```
-
-Anonymize text directly:
+Anonymize text:
 
 ```powershell
-curl -X POST http://localhost:5001/anonymize `
-  -H "Content-Type: application/json" `
-  -d "{\"text\":\"Dear John Tan, call me at +6590681834. Case HC/B/668/2024.\",\"language\":\"en\"}"
+$body = @{
+    text = "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y."
+    language = "en"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:5001/anonymize" `
+    -ContentType "application/json" `
+    -Body $body
 ```
 
-Example anonymized output:
+Both endpoints also accept an optional `entities` array containing only the entity types that should be processed.
 
-```text
-Dear <PERSON>, call me at +6*******34. Case HC*********24.
-```
+## Add a new entity
 
-Anonymization policy:
+1. Add the recognizer or pattern in `recognizers/business_recognizers.py` or `recognizers/singapore_recognizers.py`.
+2. Add its validator, normalizer, and confidence threshold to `entity_rules.py`.
+3. Add the entity name to `TARGET_ENTITIES` in `proces_pdfs.py`.
+4. Decide whether the entity belongs in `MASK_ENTITY_TYPES` in `app.py`. Otherwise, it will be replaced.
+5. Rebuild Docker and test with positive and negative examples.
 
-```text
-Replace:
-EMAIL_ADDRESS, EMAIL_DATE, DATE_TIME, PERSON, URL, LOCATION,
-JOB_TITLE, ORGANIZATION, CREDITOR_NAME, BANKRUPT_NAME,
-LAW_FIRM, GOVERNMENT_AGENCY
+## Useful commands
 
-Mask:
-BANK_ACCOUNT_NUMBER, BANKRUPTCY_NUMBER, SG_VEHICLE_NUMBER,
-SG_NRIC_FIN, PHONE_NUMBER, PASSPORT_NUMBER
-
-Hash:
-Not used currently
-```
-
-## Adding a new entity
-
-To add a new entity later:
-
-1. Add a recognizer pattern in:
-
-```text
-recognizers/business_recognizers.py
-```
-
-2. Add validation logic in:
-
-```text
-entity_rules.py
-```
-
-3. Add the entity name to `TARGET_ENTITIES` in:
-
-```text
-proces_pdfs.py
-```
-
-The basic idea is:
-
-```text
-Recognizer finds possible values.
-Entity rule decides if the value is correct.
-PDF processor includes it in the final output.
-```
-
-## Files not recommended for GitHub
-
-Do not upload:
-
-```text
-.venv/
-.venv312/
-pdfs/
-pdf_extracted_entities.json
-analyze_output.json
-email_entity_link.json
-email_extracted_entities.json
-```
-
-These are local/generated files.
-
-## Main commands
-
-Start API:
+Rebuild after code or rule changes:
 
 ```powershell
-docker compose up --build
+docker compose up -d --build
 ```
 
-Run PDF extraction:
+View service logs:
 
 ```powershell
-python proces_pdfs.py
+docker compose logs -f
 ```
 
-Rebuild after changing recognizers/rules:
+Stop the service:
 
 ```powershell
 docker compose down
-docker compose up --build
 ```
+
+Check installed Python dependencies:
+
+```powershell
+python -m pip check
+```
+
+## Files excluded from Git
+
+The virtual environments, source PDFs, generated JSON results, caches, local environment files, and editor settings are excluded through `.gitignore`. Do not commit documents containing real private information.
+
+## Important limitation
+
+The current rules were verified against the seven supplied PDFs. Text-based PDFs are supported directly. Scanned image PDFs require OCR before this pipeline can analyze them. New layouts or identifier formats should be added as test examples and handled with new recognizer and validation rules.

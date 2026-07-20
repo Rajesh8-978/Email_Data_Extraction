@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Email Data Anonymizer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <main class="page">
+        <section class="hero">
+            <div>
+                <p class="eyebrow">Presidio Singapore</p>
+                <h1>Email Data Anonymizer</h1>
+                <p class="subtitle">
+                    Paste extracted email/PDF text below. The system will detect entities and show anonymized text.
+                </p>
+            </div>
+            <div class="status-card">
+                <span class="dot"></span>
+                API running
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Input JSON or text</h2>
+                    <p>
+                        Paste your anonymizer JSON output here. Plain text also works.
+                    </p>
+                </div>
+                <button id="sampleBtn" class="secondary-btn" type="button">Use sample</button>
+            </div>
+
+            <textarea id="inputText" placeholder='Paste JSON like [{"SourceFileName":"Vehicle - 1.pdf","AnonymizedText":"..."}]'></textarea>
+
+            <div class="actions">
+                <button id="anonymizeBtn" type="button">Show anonymized output</button>
+                <button id="clearBtn" class="ghost-btn" type="button">Clear</button>
+                <span id="message" class="message"></span>
+            </div>
+        </section>
+
+        <section class="grid">
+            <div class="panel result-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Readable anonymized text</h2>
+                        <p>
+                            The whole text is shown here. Replaced entities are blue.
+                            Masked values are yellow.
+                        </p>
+                    </div>
+                    <button id="copyBtn" class="secondary-btn" type="button">Copy</button>
+                </div>
+                <div class="legend">
+                    <span><i class="legend-replace"></i> Replace</span>
+                    <span><i class="legend-mask"></i> Mask</span>
+                </div>
+                <div id="documentTabs" class="document-tabs"></div>
+                <div id="outputText" class="output document-output">Output will appear here...</div>
+            </div>
+
+            <aside class="panel">
+                <h2>Detected entities</h2>
+                <div id="summary" class="summary">
+                    <p class="muted">No results yet.</p>
+                </div>
+
+                <h3>Mask</h3>
+                <div class="chips">
+                    {% for entity in mask_entity_types %}
+                    <span>{{ entity }}</span>
+                    {% endfor %}
+                </div>
+
+                <h3>Replace</h3>
+                <div class="chips">
+                    {% for entity in replace_entity_types %}
+                    <span>{{ entity }}</span>
+                    {% endfor %}
+                </div>
+            </aside>
+        </section>
+    </main>
+
+    <script>
+        const inputText = document.getElementById("inputText");
+        const outputText = document.getElementById("outputText");
+        const summary = document.getElementById("summary");
+        const message = document.getElementById("message");
+        const anonymizeBtn = document.getElementById("anonymizeBtn");
+        const documentTabs = document.getElementById("documentTabs");
+        let latestPlainOutput = "";
+        let loadedDocuments = [];
+
+        const sample = `[
+  {
+    "EmailMessageId": 1,
+    "SourceFileName": "Sample.pdf",
+    "AnonymizedText": "Dear <PERSON>,\\nPlease call me at +6*********34.\\nCase number: HC**********24.\\nVehicle SM****5Y.\\nEmail: <EMAIL_ADDRESS>\\nRegards,\\n<PERSON>",
+    "AnonymizedItemCount": 5
+  }
+]`;
+
+        document.getElementById("sampleBtn").addEventListener("click", () => {
+            inputText.value = sample;
+        });
+
+        document.getElementById("clearBtn").addEventListener("click", () => {
+            inputText.value = "";
+            outputText.textContent = "Output will appear here...";
+            latestPlainOutput = "";
+            loadedDocuments = [];
+            documentTabs.innerHTML = "";
+            summary.innerHTML = '<p class="muted">No results yet.</p>';
+            message.textContent = "";
+        });
+
+        document.getElementById("copyBtn").addEventListener("click", async () => {
+            await navigator.clipboard.writeText(latestPlainOutput || outputText.textContent);
+            message.textContent = "Copied output.";
+        });
+
+        anonymizeBtn.addEventListener("click", async () => {
+            const text = inputText.value.trim();
+            if (!text) {
+                message.textContent = "Please paste text first.";
+                return;
+            }
+
+            anonymizeBtn.disabled = true;
+            anonymizeBtn.textContent = "Processing...";
+            message.textContent = "Analyzing and anonymizing text...";
+
+            try {
+                const jsonDocuments = parseAnonymizerJson(text);
+                if (jsonDocuments.length) {
+                    loadedDocuments = jsonDocuments;
+                    renderDocumentTabs();
+                    showDocument(0);
+                    message.textContent = `Loaded ${jsonDocuments.length} JSON document(s).`;
+                    return;
+                }
+
+                if (looksLikeJson(text)) {
+                    throw new Error("JSON detected, but I could not find AnonymizedText. Please paste pdf_anonymized_text.json content.");
+                }
+
+                const response = await fetch("/anonymize", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({text, language: "en"})
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || "Something went wrong.");
+                }
+
+                loadedDocuments = [];
+                documentTabs.innerHTML = "";
+                latestPlainOutput = data.anonymized_text || "";
+                outputText.innerHTML = highlightAnonymizedText(latestPlainOutput);
+                renderSummary(data.grouped || {}, data.anonymized_item_count || 0);
+                message.textContent = `Done. ${data.anonymized_item_count || 0} items anonymized.`;
+            } catch (error) {
+                outputText.textContent = "Error: " + error.message;
+                latestPlainOutput = "";
+                message.textContent = "Failed.";
+            } finally {
+                anonymizeBtn.disabled = false;
+                anonymizeBtn.textContent = "Show anonymized output";
+            }
+        });
+
+        function parseAnonymizerJson(value) {
+            try {
+                const parsed = JSON.parse(value);
+                const records = Array.isArray(parsed) ? parsed : [parsed];
+
+                return records
+                    .filter((record) => record && typeof record.AnonymizedText === "string")
+                    .map((record, index) => ({
+                        title: record.SourceFileName || `Document ${index + 1}`,
+                        text: record.AnonymizedText,
+                        count: record.AnonymizedItemCount || 0,
+                        id: record.EmailMessageId || index + 1,
+                    }));
+            } catch {
+                return parseAnonymizedTextWithRegex(value);
+            }
+        }
+
+        function looksLikeJson(value) {
+            const trimmed = value.trim();
+            return trimmed.startsWith("[") || trimmed.startsWith("{");
+        }
+
+        function parseAnonymizedTextWithRegex(value) {
+            const documents = [];
+            const objectMatches = value.match(/\{[\s\S]*?\}(?=\s*,\s*\{|\s*\])/g) || [];
+
+            objectMatches.forEach((objectText, index) => {
+                const sourceMatch = objectText.match(/"SourceFileName"\s*:\s*"((?:\\.|[^"\\])*)"/);
+                const textMatch = objectText.match(/"AnonymizedText"\s*:\s*"((?:\\.|[^"\\])*)"/);
+                const countMatch = objectText.match(/"AnonymizedItemCount"\s*:\s*(\d+)/);
+
+                if (!textMatch) return;
+
+                documents.push({
+                    title: unescapeJsonString(sourceMatch ? sourceMatch[1] : `Document ${index + 1}`),
+                    text: unescapeJsonString(textMatch[1]),
+                    count: countMatch ? Number(countMatch[1]) : 0,
+                    id: index + 1,
+                });
+            });
+
+            return documents;
+        }
+
+        function unescapeJsonString(value) {
+            try {
+                return JSON.parse(`"${value}"`);
+            } catch {
+                return value
+                    .replaceAll("\\n", "\n")
+                    .replaceAll("\\r", "\r")
+                    .replaceAll("\\t", "\t")
+                    .replaceAll('\\"', '"')
+                    .replaceAll("\\\\", "\\");
+            }
+        }
+
+        function renderDocumentTabs() {
+            documentTabs.innerHTML = loadedDocuments
+                .map((doc, index) => `
+                    <button class="doc-tab" type="button" data-index="${index}">
+                        ${escapeHtml(doc.title)}
+                    </button>
+                `)
+                .join("");
+
+            documentTabs.querySelectorAll(".doc-tab").forEach((button) => {
+                button.addEventListener("click", () => {
+                    showDocument(Number(button.dataset.index));
+                });
+            });
+        }
+
+        function showDocument(index) {
+            const document = loadedDocuments[index];
+            if (!document) return;
+
+            documentTabs.querySelectorAll(".doc-tab").forEach((button) => {
+                button.classList.toggle("active", Number(button.dataset.index) === index);
+            });
+
+            latestPlainOutput = document.text;
+            outputText.innerHTML = highlightAnonymizedText(document.text);
+            summary.innerHTML = `
+                <div class="total">Selected file: ${escapeHtml(document.title)}</div>
+                <div class="entity-row">
+                    <strong>Anonymized items</strong>
+                    <span>${document.count}</span>
+                </div>
+            `;
+        }
+
+        function renderSummary(grouped, total) {
+            const rows = Object.entries(grouped)
+                .filter(([, items]) => items.length)
+                .map(([type, items]) => `
+                    <div class="entity-row">
+                        <strong>${type}</strong>
+                        <span>${items.length}</span>
+                    </div>
+                `)
+                .join("");
+
+            summary.innerHTML = rows
+                ? `<div class="total">Anonymized items: ${total}</div>${rows}`
+                : '<p class="muted">No entities detected.</p>';
+        }
+
+        function escapeHtml(value) {
+            return value
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;");
+        }
+
+        function highlightAnonymizedText(text) {
+            const escaped = escapeHtml(text);
+
+            return escaped
+                .replace(/(&lt;[A-Z_]+&gt;)/g, '<mark class="highlight replace">$1</mark>')
+                .replace(/([A-Za-z0-9+]{1,4}\*{2,}[A-Za-z0-9]{1,4})/g, '<mark class="highlight mask">$1</mark>');
+        }
+    </script>
+</body>
+</html>

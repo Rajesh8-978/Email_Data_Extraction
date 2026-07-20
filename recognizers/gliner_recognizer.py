@@ -1,6 +1,20 @@
 from presidio_analyzer import EntityRecognizer, RecognizerResult
 from gliner import GLiNER
 
+
+def _chunk_text(text, max_chars=1200, overlap=120):
+    """Yield overlapping chunks so long PDF text is not truncated by GLiNER."""
+    start = 0
+    text_length = len(text)
+
+    while start < text_length:
+        end = min(start + max_chars, text_length)
+        yield start, text[start:end]
+        if end >= text_length:
+            break
+        start = end - overlap
+
+
 class GlinerRecognizer(EntityRecognizer):
     def __init__(self):
         self.model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
@@ -34,35 +48,40 @@ class GlinerRecognizer(EntityRecognizer):
         ]
 
         if not labels:
-            labels = list(label_map.values())
+            return []
 
-        predictions = self.model.predict_entities(text, labels)
+        chunks = list(_chunk_text(text))
+        chunk_predictions = self.model.batch_predict_entities(
+            [chunk for _, chunk in chunks],
+            labels,
+        )
 
         results = []
 
-        for item in predictions:
-            label = item["label"].upper().replace(" ", "_")
+        for (chunk_start, _), predictions in zip(chunks, chunk_predictions):
+            for item in predictions:
+                label = item["label"].upper().replace(" ", "_")
 
-            reverse_map = {
-                "PERSON": "PERSON",
-                "ORGANIZATION": "ORGANIZATION",
-                "CREDITOR_NAME": "CREDITOR_NAME",
-                "BANKRUPT_PERSON_NAME": "BANKRUPT_NAME",
-                "LAW_FIRM": "LAW_FIRM",
-                "GOVERNMENT_AGENCY": "GOVERNMENT_AGENCY"
-            }
+                reverse_map = {
+                    "PERSON": "PERSON",
+                    "ORGANIZATION": "ORGANIZATION",
+                    "CREDITOR_NAME": "CREDITOR_NAME",
+                    "BANKRUPT_PERSON_NAME": "BANKRUPT_NAME",
+                    "LAW_FIRM": "LAW_FIRM",
+                    "GOVERNMENT_AGENCY": "GOVERNMENT_AGENCY"
+                }
 
-            entity_type = reverse_map.get(label)
-            if not entity_type:
-                continue
+                entity_type = reverse_map.get(label)
+                if not entity_type:
+                    continue
 
-            results.append(
-                RecognizerResult(
-                    entity_type=entity_type,
-                    start=item["start"],
-                    end=item["end"],
-                    score=float(item.get("score", 0.75))
+                results.append(
+                    RecognizerResult(
+                        entity_type=entity_type,
+                        start=chunk_start + item["start"],
+                        end=chunk_start + item["end"],
+                        score=float(item.get("score", 0.75))
+                    )
                 )
-            )
 
         return results

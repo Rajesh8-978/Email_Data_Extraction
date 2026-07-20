@@ -53,14 +53,12 @@ def _remove_overlaps(entities: list[dict]) -> list[dict]:
             entity["start"],
         ),
     ):
-        existing_index = next(
-            (index for index, chosen in enumerate(selected) if _overlaps(item, chosen)),
-            None,
-        )
-        if existing_index is None:
+        overlapping = [chosen for chosen in selected if _overlaps(item, chosen)]
+        if not overlapping:
             selected.append(item)
-        elif _priority(item) > _priority(selected[existing_index]):
-            selected[existing_index] = item
+        elif all(_priority(item) > _priority(chosen) for chosen in overlapping):
+            selected = [chosen for chosen in selected if chosen not in overlapping]
+            selected.append(item)
     return sorted(selected, key=lambda item: (item["start"], item["entity_type"]))
 
 
@@ -81,7 +79,15 @@ def collect_entities(
             continue
 
         raw_value = text[result.start:result.end].strip()
-        context = _context(text, result.start, result.end)
+        # Business relationships can span a sentence, signature, or short paragraph.
+        context_radius = {
+            "BANKRUPT_NAME": 500,
+            "CREDITOR_NAME": 220,
+            "GOVERNMENT_AGENCY": 140,
+            "ORGANIZATION": 120,
+            "LAW_FIRM": 160,
+        }.get(entity_type, 80)
+        context = _context(text, result.start, result.end, radius=context_radius)
         if not raw_value or not rule.validator(raw_value, context):
             continue
 
