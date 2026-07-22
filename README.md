@@ -72,6 +72,7 @@ app.py
 entity_collector.py
 entity_rules.py
 proces_pdfs.py
+result_formatter.py
 recognizers/
   business_recognizers.py
   gliner_recognizer.py
@@ -129,6 +130,10 @@ Wait until the status is `healthy`. The service is then available at:
 - Health check: <http://localhost:5001/health>
 - Analyze API: <http://localhost:5001/analyze>
 - Anonymize API: <http://localhost:5001/anonymize>
+- Extracted-entities API: <http://localhost:5001/api/extracted-entities>
+- Anonymized-text API: <http://localhost:5001/api/anonymized-text>
+- PDF extraction API: <http://localhost:5001/api/pdf/extracted-entities>
+- PDF anonymization API: <http://localhost:5001/api/pdf/anonymized-text>
 - Entity list: <http://localhost:5001/entity-types>
 
 Docker publishes host port `5001` to application port `3000` inside the container. The PDF processor connects to Docker through `http://localhost:5001/anonymize`.
@@ -180,6 +185,90 @@ Open <http://localhost:5001/>. You can:
 - Copy the selected anonymized document.
 
 ## API examples
+
+There are two input methods:
+
+- Text endpoints receive JSON text.
+- PDF endpoints receive one uploaded PDF file.
+
+Opening an endpoint URL in a browser sends `GET` and shows a JSON usage message. To process data, always use `POST`. The local API does not require a separate API key by default. If your team requires authentication, place these routes behind your gateway or add an `X-API-Key` check using your deployment secret.
+
+| Input | Extracted-entities result | Anonymized-text result |
+|---|---|---|
+| Text JSON | `POST /api/extracted-entities` | `POST /api/anonymized-text` |
+| One PDF upload | `POST /api/pdf/extracted-entities` | `POST /api/pdf/anonymized-text` |
+
+Request body:
+
+```json
+{
+  "text": "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y.",
+  "language": "en"
+}
+```
+
+Extracted entities only:
+
+```powershell
+$body = @{
+    text = "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y."
+    language = "en"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:5001/api/extracted-entities" `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+This returns JSON containing `count`, `entities`, and `grouped`.
+
+Anonymized text only:
+
+```powershell
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:5001/api/anonymized-text" `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+This returns JSON containing `anonymized_text`, `items`, `entities`, `grouped`, and the replace/mask policy.
+
+### Upload a PDF directly
+
+Use the PDF endpoints when another system needs to upload a PDF file directly. The request must be `POST` with `multipart/form-data`; it is not a `GET` request.
+
+- `POST /api/pdf/extracted-entities` returns extracted and validated entities.
+- `POST /api/pdf/anonymized-text` returns safe anonymized text only. It does not include the original detected values again.
+
+Open either PDF endpoint in a browser to see its JSON usage instructions. To process a file, use PowerShell with `curl.exe`.
+
+Important: copy each command as **one single line**. Do not type the `>>` prompt shown by PowerShell, and upload only one `file` field per request.
+
+```powershell
+curl.exe -X POST "http://localhost:5001/api/pdf/extracted-entities" -F "file=@.\pdfs\Vehicle - 2.pdf" -F "language=en" -F "email_message_id=7"
+```
+
+For anonymized PDF text:
+
+```powershell
+curl.exe -X POST "http://localhost:5001/api/pdf/anonymized-text" -F "file=@.\pdfs\Vehicle - 2.pdf" -F "language=en" -F "email_message_id=7"
+```
+
+The two PDF endpoints return the same JSON structures as the generated output files:
+
+- `/api/pdf/extracted-entities` returns one object in the same format as `pdf_extracted_entities.json`.
+- `/api/pdf/anonymized-text` returns one object in the same format as `pdf_anonymized_text.json`.
+
+`email_message_id` is optional and defaults to `1`. It lets the calling system supply its own record ID. Uploads are limited to 25 MB. Text-based PDFs are supported directly; scanned/image PDFs must first be passed through OCR.
+
+To upload any PDF outside this project, replace the `file` value with its full path. Keep the quotes when the path contains spaces:
+
+```powershell
+curl.exe -X POST "http://localhost:5001/api/pdf/extracted-entities" -F "file=@C:\Users\Admin\Downloads\My File.pdf" -F "language=en" -F "email_message_id=1"
+```
 
 Analyze text:
 

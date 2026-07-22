@@ -1,5 +1,10 @@
+from io import BytesIO
+import json
+
 from flask import Flask, request, jsonify, render_template
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
+from pypdf import PdfReader
+from werkzeug.exceptions import RequestEntityTooLarge
 import re
 
 from recognizers.singapore_recognizers import singapore_recognizers
@@ -7,8 +12,14 @@ from recognizers.business_recognizers import business_recognizers
 from recognizers.gliner_recognizer import GlinerRecognizer
 from entity_collector import collect_entities, group_entities
 from entity_rules import ENTITY_RULES
+from result_formatter import (
+    build_anonymized_pdf_result,
+    build_extracted_pdf_result,
+)
 
 app = Flask(__name__)
+MAX_PDF_UPLOAD_BYTES = 25 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_PDF_UPLOAD_BYTES
 print("Open anonymizer UI: http://localhost:5001/", flush=True)
 
 registry = RecognizerRegistry()
@@ -77,6 +88,93 @@ def _request_data():
         return None, jsonify({"error": "'entities' must be a list"}), 400
 
     return (text, language, entities, data), None, None
+
+
+def _uploaded_pdf_data():
+    """Read one multipart PDF upload and return the extracted text."""
+    uploaded_file = request.files.get("file")
+    if uploaded_file is None or not uploaded_file.filename:
+        return None, jsonify({
+            "error": "Send one PDF using multipart/form-data with the field name 'file'."
+        }), 400
+
+    source_file_name = uploaded_file.filename
+    if not source_file_name.lower().endswith(".pdf"):
+        return None, jsonify({"error": "The uploaded file must have a .pdf extension."}), 400
+
+    try:
+        reader = PdfReader(BytesIO(uploaded_file.read()))
+        if reader.is_encrypted and not reader.decrypt(""):
+            return None, jsonify({
+                "error": "The PDF is password-protected. Upload an unprotected PDF."
+            }), 400
+        text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception as error:
+        return None, jsonify({
+            "error": "The uploaded file could not be read as a PDF.",
+            "details": str(error),
+        }), 400
+
+    if not text:
+        return None, jsonify({
+            "error": "No selectable text was found in the PDF. Use OCR first for scanned/image PDFs."
+        }), 422
+
+    language = request.form.get("language", "en")
+    entities = list(ENTITY_RULES)
+    entity_input = request.form.get("entities")
+    if entity_input:
+        try:
+            entities = json.loads(entity_input)
+        except json.JSONDecodeError:
+            entities = [value.strip() for value in entity_input.split(",") if value.strip()]
+
+    if not isinstance(entities, list):
+        return None, jsonify({"error": "'entities' must be a JSON array or comma-separated list."}), 400
+
+    try:
+        email_message_id = int(request.form.get("email_message_id", "1"))
+    except ValueError:
+        return None, jsonify({"error": "'email_message_id' must be a whole number."}), 400
+
+    if email_message_id < 1:
+        return None, jsonify({"error": "'email_message_id' must be at least 1."}), 400
+
+    return (text, language, entities, source_file_name, email_message_id), None, None
+
+
+def _extraction_payload(text, language, entities):
+    collected = _analyze_and_collect(text, language, entities)
+    return {
+        "count": len(collected),
+        "entities": collected,
+        "grouped": group_entities(collected),
+    }
+
+
+def _anonymization_payload(text, language, entities):
+    raw_results = analyzer.analyze(
+        text=text,
+        language=language,
+        entities=entities,
+    )
+    collected = _collect_from_results(text, raw_results, entities, deduplicate=False)
+    reporting_entities = _collect_from_results(text, raw_results, entities, deduplicate=True)
+    anonymized_text, items = _anonymize_text(text, collected)
+
+    return {
+        "anonymized_text": anonymized_text,
+        "items": items,
+        "count": len(reporting_entities),
+        "anonymized_item_count": len(items),
+        "entities": reporting_entities,
+        "grouped": group_entities(reporting_entities),
+        "operator_policy": {
+            "mask": sorted(MASK_ENTITY_TYPES),
+            "replace": sorted(REPLACE_ENTITY_TYPES),
+            "hash": [],
+        },
+    }
 
 
 def _analyze_and_collect(text, language, entities, deduplicate=True):
@@ -393,12 +491,72 @@ def analyze():
         return error_response, status
 
     text, language, entities, _ = request_values
-    collected = _analyze_and_collect(text, language, entities)
+    return jsonify(_extraction_payload(text, language, entities))
+
+
+def _api_usage(endpoint, result_description):
     return jsonify({
-        "count": len(collected),
-        "entities": collected,
-        "grouped": group_entities(collected),
+        "endpoint": endpoint,
+        "method": "POST",
+        "content_type": "application/json",
+        "description": result_description,
+        "request_body": {
+            "text": "Paste the email or PDF-extracted text here",
+            "language": "en",
+        },
+        "message": "Use POST with the JSON request body to receive the result.",
     })
+
+
+def _pdf_api_usage(endpoint, result_description):
+    return jsonify({
+        "endpoint": endpoint,
+        "method": "POST",
+        "content_type": "multipart/form-data",
+        "description": result_description,
+        "form_fields": {
+            "file": "Required: one text-based PDF file",
+            "language": "Optional: en (default)",
+            "email_message_id": "Optional: 1 (default)",
+            "entities": "Optional: JSON array or comma-separated entity types",
+        },
+        "maximum_file_size_mb": MAX_PDF_UPLOAD_BYTES // (1024 * 1024),
+        "message": "Use POST to upload a PDF. Opening this URL in a browser only shows this usage information.",
+    })
+
+
+@app.route("/api/extracted-entities", methods=["GET", "POST"])
+def extracted_entities_api():
+    """Integration endpoint which returns only the extracted entity result."""
+    if request.method == "GET":
+        return _api_usage(
+            "/api/extracted-entities",
+            "Returns detected and validated entities as JSON.",
+        )
+    return analyze()
+
+
+@app.route("/api/pdf/extracted-entities", methods=["GET", "POST"])
+def pdf_extracted_entities_api():
+    """Upload one PDF and receive its extracted entities as JSON."""
+    if request.method == "GET":
+        return _pdf_api_usage(
+            "/api/pdf/extracted-entities",
+            "Returns extracted, validated entities from one uploaded PDF.",
+        )
+
+    request_values, error_response, status = _uploaded_pdf_data()
+    if error_response:
+        return error_response, status
+
+    text, language, entities, source_file_name, email_message_id = request_values
+    result = _extraction_payload(text, language, entities)
+    return jsonify(build_extracted_pdf_result(
+        entities=result["entities"],
+        source_file_name=source_file_name,
+        email_message_id=email_message_id,
+        language=language,
+    ))
 
 
 @app.route("/", methods=["GET"])
@@ -418,28 +576,43 @@ def anonymize():
         return error_response, status
 
     text, language, entities, _ = request_values
-    raw_results = analyzer.analyze(
-        text=text,
-        language=language,
-        entities=entities
-    )
-    collected = _collect_from_results(text, raw_results, entities, deduplicate=False)
-    reporting_entities = _collect_from_results(text, raw_results, entities, deduplicate=True)
-    anonymized_text, items = _anonymize_text(text, collected)
+    return jsonify(_anonymization_payload(text, language, entities))
 
-    return jsonify({
-        "anonymized_text": anonymized_text,
-        "items": items,
-        "count": len(reporting_entities),
-        "anonymized_item_count": len(items),
-        "entities": reporting_entities,
-        "grouped": group_entities(reporting_entities),
-        "operator_policy": {
-            "mask": sorted(MASK_ENTITY_TYPES),
-            "replace": sorted(REPLACE_ENTITY_TYPES),
-            "hash": [],
-        },
-    })
+
+@app.route("/api/anonymized-text", methods=["GET", "POST"])
+def anonymized_text_api():
+    """Integration endpoint which returns only the anonymized-text result."""
+    if request.method == "GET":
+        return _api_usage(
+            "/api/anonymized-text",
+            "Returns the complete text with replacement and masking applied.",
+        )
+    return anonymize()
+
+
+@app.route("/api/pdf/anonymized-text", methods=["GET", "POST"])
+def pdf_anonymized_text_api():
+    """Upload one PDF and receive safe anonymized text as JSON."""
+    if request.method == "GET":
+        return _pdf_api_usage(
+            "/api/pdf/anonymized-text",
+            "Returns safe anonymized text from one uploaded PDF.",
+        )
+
+    request_values, error_response, status = _uploaded_pdf_data()
+    if error_response:
+        return error_response, status
+
+    text, language, entities, source_file_name, email_message_id = request_values
+    result = _anonymization_payload(text, language, entities)
+
+    # Do not send original private values back in the anonymized PDF response.
+    return jsonify(build_anonymized_pdf_result(
+        source_file_name=source_file_name,
+        anonymized_text=result["anonymized_text"],
+        anonymized_item_count=result["anonymized_item_count"],
+        email_message_id=email_message_id,
+    ))
 
 
 @app.route("/entity-types", methods=["GET"])
@@ -453,6 +626,13 @@ def entity_types():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def uploaded_file_too_large(_):
+    return jsonify({
+        "error": f"PDF file is too large. Maximum upload size is {MAX_PDF_UPLOAD_BYTES // (1024 * 1024)} MB."
+    }), 413
 
 
 if __name__ == "__main__":
