@@ -101,6 +101,30 @@ def proxy_pdf_anonymization():
     return _proxy_pdf("/api/pdf/anonymized-text")
 
 
+@app.route("/api/proxy", methods=["POST"])
+def vercel_style_proxy():
+    operation = request.args.get("operation")
+
+    if operation == "text-extracted":
+        return proxy_text_extraction()
+    if operation == "text-anonymized":
+        return proxy_text_anonymization()
+    if operation == "pdf-extracted":
+        return proxy_pdf_extraction()
+    if operation == "pdf-anonymized":
+        return proxy_pdf_anonymization()
+
+    return jsonify({
+        "error": "Missing or invalid operation.",
+        "operations": [
+            "text-extracted",
+            "text-anonymized",
+            "pdf-extracted",
+            "pdf-anonymized",
+        ],
+    }), 400
+
+
 def _proxy_pdf(endpoint):
     api_base, error_response, status = _api_base()
     if error_response:

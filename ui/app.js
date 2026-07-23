@@ -109,8 +109,8 @@ async function runAnalyzer() {
   setStatus("Analysing data, please wait...", "working");
   try {
     const result = state.mode === "text"
-      ? await postJson("/proxy/text/extracted-entities", textPayload())
-      : await postForm("/proxy/pdf/extracted-entities");
+      ? await postJson(proxyUrl("text-extracted"), textPayload())
+      : await postForm(proxyUrl("pdf-extracted"));
 
     state.analyzerResult = result;
     renderAnalyzer(result);
@@ -124,8 +124,8 @@ async function runAnonymizer() {
   setStatus("Anonymizing data, please wait...", "working");
   try {
     const result = state.mode === "text"
-      ? await postJson("/proxy/text/anonymized-text", textPayload())
-      : await postForm("/proxy/pdf/anonymized-text");
+      ? await postJson(proxyUrl("text-anonymized"), textPayload())
+      : await postForm(proxyUrl("pdf-anonymized"));
 
     state.anonymizerResult = result;
     renderAnonymizer(result);
@@ -137,10 +137,13 @@ async function runAnonymizer() {
 
 function textPayload() {
   return {
-    api_base: els.apiBase.value.trim(),
     text: els.textInput.value,
     language: "en",
   };
+}
+
+function proxyUrl(operation) {
+  return `/api/proxy?operation=${encodeURIComponent(operation)}`;
 }
 
 async function postJson(url, payload) {
@@ -159,7 +162,6 @@ async function postForm(url) {
   }
 
   const form = new FormData();
-  form.append("api_base", els.apiBase.value.trim());
   form.append("file", file);
   form.append("language", "en");
   form.append("email_message_id", els.emailMessageId.value || "1");

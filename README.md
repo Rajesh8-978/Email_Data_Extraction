@@ -325,6 +325,61 @@ https://presidio-test-api.<region>.azurecontainerapps.io/api/pdf/anonymized-text
 
 For testing, `min-replicas 1` keeps the API warm. For production, add authentication/API key protection before exposing private document processing publicly.
 
+## Host The Review UI On Vercel
+
+Vercel should host only the lightweight browser UI. The analyzer/anonymizer backend should continue running on Azure Container Apps because it uses Docker, Presidio, GLiNER, spaCy, and large model files.
+
+Production flow:
+
+```text
+User browser
+  -> Vercel UI
+  -> Vercel /api/proxy serverless function
+  -> Azure Container Apps backend API
+  -> JSON result back to browser
+```
+
+Files used by Vercel:
+
+```text
+vercel.json
+api/proxy.js
+ui/index.html
+ui/app.js
+ui/styles.css
+```
+
+Deploy from GitHub:
+
+1. Push this repository to GitHub.
+2. Open Vercel.
+3. Choose `Add New Project`.
+4. Import this GitHub repository.
+5. Keep the root directory as the project root.
+6. Add this environment variable:
+
+```text
+AZURE_API_BASE=https://<your-azure-container-app-url>
+```
+
+Example:
+
+```text
+AZURE_API_BASE=https://presidio-test-api.bravesand-5605c72b.southeastasia.azurecontainerapps.io
+```
+
+7. Deploy.
+
+After deployment, the public Vercel URL can be opened by anyone:
+
+```text
+https://<your-vercel-project>.vercel.app
+```
+
+The API base URL is hidden from the UI. Users only see the upload/text interface and the analyzer/anonymizer results.
+
+Important: if the Azure backend is stopped or deleted, the Vercel UI will open but analysis/anonymization will fail because the actual processing API is not running.
+
 ## Docker Image Export And Import
 
 Save image to a tar file:
@@ -382,4 +437,3 @@ python -m pip check
 - New document layouts may need additional recognizers or validation rules.
 - The Azure test API currently has no built-in API key check.
 - Do not commit real private PDFs or generated output containing private information.
-
