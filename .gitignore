@@ -15,3 +15,4 @@ email_extracted_entities.json
 .env
 .vscode/
 .idea/
+test_input.txt

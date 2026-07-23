@@ -1,7 +1,7 @@
 from io import BytesIO
 import json
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from pypdf import PdfReader
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -20,7 +20,7 @@ from result_formatter import (
 app = Flask(__name__)
 MAX_PDF_UPLOAD_BYTES = 25 * 1024 * 1024
 app.config["MAX_CONTENT_LENGTH"] = MAX_PDF_UPLOAD_BYTES
-print("Open anonymizer UI: http://localhost:5001/", flush=True)
+print("API running: http://localhost:5001/health", flush=True)
 
 registry = RecognizerRegistry()
 registry.load_predefined_recognizers()
@@ -561,12 +561,18 @@ def pdf_extracted_entities_api():
 
 @app.route("/", methods=["GET"])
 def index():
-    return render_template(
-        "index.html",
-        entity_types=sorted(ENTITY_RULES),
-        mask_entity_types=sorted(MASK_ENTITY_TYPES),
-        replace_entity_types=sorted(REPLACE_ENTITY_TYPES),
-    )
+    """Keep the root URL API-only; the optional browser UI was removed."""
+    return jsonify({
+        "service": "Presidio Singapore API",
+        "status": "running",
+        "health": "/health",
+        "endpoints": {
+            "text_extraction": "/api/extracted-entities",
+            "text_anonymization": "/api/anonymized-text",
+            "pdf_extraction": "/api/pdf/extracted-entities",
+            "pdf_anonymization": "/api/pdf/anonymized-text",
+        },
+    })
 
 
 @app.route("/anonymize", methods=["POST"])

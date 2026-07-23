@@ -1,16 +1,50 @@
 # Email Data Extraction and Anonymization
 
-This project extracts and anonymizes business entities from email text stored in PDF files. It is designed for Singapore-specific identifiers while also supporting general entities such as people, email addresses, dates, locations, organizations, and URLs.
+This project detects and anonymizes private/business data from text and PDF files. It is built for Singapore-focused email/PDF documents, with extra rules for bankruptcy cases, Singapore phone numbers, NRIC/FIN, vehicle numbers, passport-style values, bank accounts, names, organizations, locations, dates, URLs, and government/legal entities.
 
-The application combines:
+The backend is an API service. A separate local browser UI is included only for review/testing.
 
-- Microsoft Presidio as the entity-analysis framework.
-- GLiNER as the AI named-entity model.
-- Regular-expression recognizers for structured and Singapore-specific values.
-- Validation and normalization rules to reject weak or incorrect detections.
-- A Flask API and browser interface for analysis and anonymization.
+## What This Project Does
 
-## Supported entities
+The project has two main outputs:
+
+- Analyzer output: returns only extracted entities in JSON format.
+- Anonymizer output: returns safe anonymized text, where private values are replaced or masked.
+
+Example:
+
+```text
+Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y. Case HC/B/668/2024.
+```
+
+Analyzer finds:
+
+```text
+PERSON: John Tan
+PHONE_NUMBER: +6591234567
+SG_VEHICLE_NUMBER: SMD4125Y
+BANKRUPTCY_NUMBER: HC/B/668/2024
+```
+
+Anonymizer returns:
+
+```text
+Dear <PERSON>, call +6*********67. Vehicle SM****5Y. Case HC*********24.
+```
+
+## Main Technologies
+
+- Flask: creates the HTTP API endpoints.
+- Microsoft Presidio Analyzer: framework that runs recognizers and returns detected entities.
+- GLiNER: AI named-entity model used for names, organizations, locations, job titles, and other natural-language entities.
+- spaCy: NLP runtime used by GLiNER/Presidio dependencies.
+- pypdf: extracts selectable text from PDF files.
+- requests: sends API requests from scripts and the local UI proxy.
+- Docker: packages and runs the backend API consistently on different machines.
+
+Presidio is the framework, not the AI model. GLiNER is the AI model used for flexible named-entity detection. Regex recognizers are used for fixed-format entities such as bankruptcy numbers, phone numbers, NRIC/FIN, vehicle numbers, and bank account-like values.
+
+## Supported Entities
 
 - `EMAIL_ADDRESS`
 - `EMAIL_DATE`
@@ -31,15 +65,24 @@ The application combines:
 - `LAW_FIRM`
 - `GOVERNMENT_AGENCY`
 
-The recognizers include protection for PDF-extracted email addresses containing spaces, addresses split across lines, Singapore telephone numbers, NRIC/FIN values, vehicle numbers, and bankruptcy formats such as `HC/B/668/2024`, `B/668/2024`, and `HC 1394/2023`.
+Singapore/business recognizers include formats such as:
 
-## Anonymization policy
+- `HC/B/668/2024`
+- `B/668/2024`
+- `HC/1394/2023`
+- Singapore phone numbers
+- Singapore vehicle numbers
+- Singapore NRIC/FIN-style values
+- bankruptcy/bankrupt/creditor names from legal context
+- government agencies and legal/business organizations
+
+## Anonymization Policy
 
 General entities are replaced with readable tags:
 
 ```text
-John Tan                 -> <PERSON>
-john@example.com         -> <EMAIL_ADDRESS>
+John Tan                -> <PERSON>
+john@example.com        -> <EMAIL_ADDRESS>
 RSM Corporate Advisory  -> <ORGANIZATION>
 ```
 
@@ -63,84 +106,117 @@ Masked entity types:
 
 All other supported entities are replaced. Hashing is not currently used.
 
-The final safety pass also masks labelled identifiers such as policy numbers, UENs, authentication numbers, feedback numbers, company numbers, and reference numbers. Repeated detected values and safe person-name aliases are anonymized throughout the document.
-
-## Project structure
+## Project Structure
 
 ```text
-app.py
-entity_collector.py
-entity_rules.py
-proces_pdfs.py
-result_formatter.py
+app.py                         Backend Flask API
+entity_collector.py            Deduplication and overlap handling
+entity_rules.py                Validation, confidence, normalization rules
+proces_pdfs.py                 Batch PDF processor for the local pdfs folder
+result_formatter.py            Shared output formatting for PDF results
 recognizers/
-  business_recognizers.py
-  gliner_recognizer.py
-  singapore_recognizers.py
-templates/
-  index.html
-static/
-  styles.css
+  business_recognizers.py      Business/legal recognizers
+  gliner_recognizer.py         GLiNER model recognizer
+  singapore_recognizers.py     Singapore-specific pattern recognizers
+ui/
+  frontend_ui.py               Separate local UI proxy/server
+  index.html                   UI page
+  app.js                       UI API integration and highlighting
+  styles.css                   UI styling
 Dockerfile
 docker-compose.yml
 requirements.txt
 ENTITY_GUIDE.md
 ```
 
-## Processing flow
+## Backend API Endpoints
 
-```text
-PDF files
-  -> pypdf extracts text
-  -> proces_pdfs.py sends text to the local API
-  -> Presidio runs pattern recognizers and GLiNER
-  -> entity_rules.py validates and normalizes candidates
-  -> entity_collector.py removes duplicates and overlaps
-  -> the API replaces or masks detected private data
-  -> two JSON output files are written
-```
+The backend supports both text input and PDF upload.
 
-GLiNER processes long documents in overlapping chunks so entities near chunk boundaries are not lost. When detections overlap, the most specific, longest, highest-confidence entity is retained.
+| Input type | Analyzer endpoint | Anonymizer endpoint |
+|---|---|---|
+| Text JSON | `POST /api/extracted-entities` | `POST /api/anonymized-text` |
+| PDF upload | `POST /api/pdf/extracted-entities` | `POST /api/pdf/anonymized-text` |
 
-## Prerequisites
+Other endpoints:
 
-- Docker Desktop for running the API.
-- Python 3.11 or 3.12 for running `proces_pdfs.py` on the host computer.
-- At least several gigabytes of free disk space for the Docker image and downloaded language models.
+- `GET /health`
+- `GET /entity-types`
+- `POST /analyze`
+- `POST /anonymize`
 
-The first Docker startup can take several minutes because spaCy and GLiNER model files are downloaded and loaded. The named Docker volume `presidio_models` keeps the model cache for later starts.
+Opening an API URL in a browser sends `GET`. Real processing must use `POST`.
 
-## Setup with Docker
+## Run Locally With Docker
 
-Open PowerShell in the project folder and run:
+Open PowerShell in the project folder:
 
 ```powershell
 docker compose up -d --build
 ```
 
-Check the container:
+Check the service:
 
 ```powershell
 docker compose ps
 ```
 
-Wait until the status is `healthy`. The service is then available at:
+Local backend URL:
 
-- Browser interface: <http://localhost:5001/>
-- Health check: <http://localhost:5001/health>
-- Analyze API: <http://localhost:5001/analyze>
-- Anonymize API: <http://localhost:5001/anonymize>
-- Extracted-entities API: <http://localhost:5001/api/extracted-entities>
-- Anonymized-text API: <http://localhost:5001/api/anonymized-text>
-- PDF extraction API: <http://localhost:5001/api/pdf/extracted-entities>
-- PDF anonymization API: <http://localhost:5001/api/pdf/anonymized-text>
-- Entity list: <http://localhost:5001/entity-types>
+```text
+http://localhost:5001
+```
 
-Docker publishes host port `5001` to application port `3000` inside the container. The PDF processor connects to Docker through `http://localhost:5001/anonymize`.
+Health check:
 
-## Python environment for PDF processing
+```powershell
+curl.exe "http://localhost:5001/health"
+```
 
-The Docker container runs the API, but `proces_pdfs.py` runs on the host. Create a virtual environment once:
+Docker maps:
+
+```text
+Computer port 5001 -> container port 3000
+```
+
+So other systems call port `5001` locally, while Azure Container Apps should use target port `3000`.
+
+## Run The Local Review UI
+
+The UI is separate from the backend API. It can call either:
+
+- local Docker API: `http://localhost:5001`
+- Azure deployed API: `https://<your-app>.azurecontainerapps.io`
+
+Start the UI:
+
+```powershell
+.\.venv312\Scripts\python.exe ui\frontend_ui.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080
+```
+
+The UI lets you:
+
+- choose text or PDF input
+- run analyzer
+- run anonymizer
+- run both
+- view analyzer entity cards
+- view anonymized full text with highlights
+- copy JSON output
+
+The UI does not replace the API. It is only a friendly review screen.
+
+## Python Setup For Local Scripts
+
+The Docker container runs the API. The script `proces_pdfs.py` runs on your computer and sends PDF text to the API.
+
+Create the Python environment once:
 
 ```powershell
 py -3.12 -m venv .venv312
@@ -150,71 +226,47 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-For later sessions, only activate the existing environment:
+For later sessions:
 
 ```powershell
 .\.venv312\Scripts\Activate.ps1
 ```
 
-## Process PDFs
+## Process PDFs From The Local Folder
 
-1. Place the source files inside the `pdfs` folder.
-2. Make sure the Docker container is healthy.
-3. Run:
+Put PDF files inside:
+
+```text
+pdfs/
+```
+
+Run:
 
 ```powershell
 python proces_pdfs.py
 ```
 
-The script creates exactly one main result object per PDF in both files:
+Outputs:
 
-- `pdf_extracted_entities.json` contains grouped, normalized entity values.
-- `pdf_anonymized_text.json` contains the complete readable anonymized text.
+- `pdf_extracted_entities.json`
+- `pdf_anonymized_text.json`
 
-Seven PDF input files therefore produce seven main JSON objects in each output file.
+If 7 PDFs are in the folder, the output file contains 7 main result objects.
 
-## Browser interface
+## Text API Examples
 
-Open <http://localhost:5001/>. You can:
-
-- Paste plain text and send it to the anonymization API.
-- Paste the contents of `pdf_anonymized_text.json`.
-- Switch between PDF results using document tabs.
-- Read the complete anonymized text.
-- See replaced values highlighted in blue and masked values highlighted in yellow.
-- Copy the selected anonymized document.
-
-## API examples
-
-There are two input methods:
-
-- Text endpoints receive JSON text.
-- PDF endpoints receive one uploaded PDF file.
-
-Opening an endpoint URL in a browser sends `GET` and shows a JSON usage message. To process data, always use `POST`. The local API does not require a separate API key by default. If your team requires authentication, place these routes behind your gateway or add an `X-API-Key` check using your deployment secret.
-
-| Input | Extracted-entities result | Anonymized-text result |
-|---|---|---|
-| Text JSON | `POST /api/extracted-entities` | `POST /api/anonymized-text` |
-| One PDF upload | `POST /api/pdf/extracted-entities` | `POST /api/pdf/anonymized-text` |
-
-Request body:
-
-```json
-{
-  "text": "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y.",
-  "language": "en"
-}
-```
-
-Extracted entities only:
+Create request body:
 
 ```powershell
 $body = @{
-    text = "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y."
+    text = "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y. Case HC/B/668/2024."
     language = "en"
 } | ConvertTo-Json
+```
 
+Analyzer:
+
+```powershell
 Invoke-RestMethod `
     -Method Post `
     -Uri "http://localhost:5001/api/extracted-entities" `
@@ -222,9 +274,7 @@ Invoke-RestMethod `
     -Body $body
 ```
 
-This returns JSON containing `count`, `entities`, and `grouped`.
-
-Anonymized text only:
+Anonymizer:
 
 ```powershell
 Invoke-RestMethod `
@@ -234,112 +284,102 @@ Invoke-RestMethod `
     -Body $body
 ```
 
-This returns JSON containing `anonymized_text`, `items`, `entities`, `grouped`, and the replace/mask policy.
+## PDF API Examples
 
-### Upload a PDF directly
+Use forward slashes in Windows paths when calling with `curl.exe`.
 
-Use the PDF endpoints when another system needs to upload a PDF file directly. The request must be `POST` with `multipart/form-data`; it is not a `GET` request.
-
-- `POST /api/pdf/extracted-entities` returns extracted and validated entities.
-- `POST /api/pdf/anonymized-text` returns safe anonymized text only. It does not include the original detected values again.
-
-Open either PDF endpoint in a browser to see its JSON usage instructions. To process a file, use PowerShell with `curl.exe`.
-
-Important: copy each command as **one single line**. Do not type the `>>` prompt shown by PowerShell, and upload only one `file` field per request.
+Analyzer:
 
 ```powershell
-curl.exe -X POST "http://localhost:5001/api/pdf/extracted-entities" -F "file=@.\pdfs\Vehicle - 2.pdf" -F "language=en" -F "email_message_id=7"
+curl.exe --max-time 300 -X POST "http://localhost:5001/api/pdf/extracted-entities" -F "file=@C:/Users/Admin/OneDrive - Zest Labs/Desktop/Rajesh_Documents/POD -2 (1).pdf" -F "language=en" -F "email_message_id=1"
 ```
 
-For anonymized PDF text:
+Anonymizer:
 
 ```powershell
-curl.exe -X POST "http://localhost:5001/api/pdf/anonymized-text" -F "file=@.\pdfs\Vehicle - 2.pdf" -F "language=en" -F "email_message_id=7"
+curl.exe --max-time 300 -X POST "http://localhost:5001/api/pdf/anonymized-text" -F "file=@C:/Users/Admin/OneDrive - Zest Labs/Desktop/Rajesh_Documents/POD -2 (1).pdf" -F "language=en" -F "email_message_id=1"
 ```
 
-The two PDF endpoints return the same JSON structures as the generated output files:
+For Azure, replace `http://localhost:5001` with the Azure URL:
 
-- `/api/pdf/extracted-entities` returns one object in the same format as `pdf_extracted_entities.json`.
-- `/api/pdf/anonymized-text` returns one object in the same format as `pdf_anonymized_text.json`.
+```text
+https://<your-app>.azurecontainerapps.io
+```
 
-`email_message_id` is optional and defaults to `1`. It lets the calling system supply its own record ID. Uploads are limited to 25 MB. Text-based PDFs are supported directly; scanned/image PDFs must first be passed through OCR.
+## Azure Deployment Notes
 
-To upload any PDF outside this project, replace the `file` value with its full path. Keep the quotes when the path contains spaces:
+Recommended flow:
+
+1. Build Docker image locally.
+2. Push image to Azure Container Registry.
+3. Create Azure Container Apps environment.
+4. Create Azure Container App with external ingress.
+5. Use target port `3000`.
+
+Example deployed API shape:
+
+```text
+https://presidio-test-api.<region>.azurecontainerapps.io/api/pdf/extracted-entities
+https://presidio-test-api.<region>.azurecontainerapps.io/api/pdf/anonymized-text
+```
+
+For testing, `min-replicas 1` keeps the API warm. For production, add authentication/API key protection before exposing private document processing publicly.
+
+## Docker Image Export And Import
+
+Save image to a tar file:
 
 ```powershell
-curl.exe -X POST "http://localhost:5001/api/pdf/extracted-entities" -F "file=@C:\Users\Admin\Downloads\My File.pdf" -F "language=en" -F "email_message_id=1"
+docker save -o C:\presidio-singapore.tar presidio-singapore-presidio-singapore:latest
 ```
 
-Analyze text:
+Load image on another machine:
 
 ```powershell
-$body = @{
-    text = "Email john@example.com. Vehicle SMD4125Y. Case HC/B/668/2024."
-    language = "en"
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Method Post `
-    -Uri "http://localhost:5001/analyze" `
-    -ContentType "application/json" `
-    -Body $body
+docker load -i C:\presidio-singapore.tar
 ```
 
-Anonymize text:
+The tar file can be large. Use an NTFS or exFAT USB drive, not FAT32.
 
-```powershell
-$body = @{
-    text = "Dear John Tan, call +65 9123 4567. Vehicle SMD4125Y."
-    language = "en"
-} | ConvertTo-Json
+## Add A New Entity
 
-Invoke-RestMethod `
-    -Method Post `
-    -Uri "http://localhost:5001/anonymize" `
-    -ContentType "application/json" `
-    -Body $body
-```
-
-Both endpoints also accept an optional `entities` array containing only the entity types that should be processed.
-
-## Add a new entity
-
-1. Add the recognizer or pattern in `recognizers/business_recognizers.py` or `recognizers/singapore_recognizers.py`.
-2. Add its validator, normalizer, and confidence threshold to `entity_rules.py`.
-3. Add the entity name to `TARGET_ENTITIES` in `proces_pdfs.py`.
-4. Decide whether the entity belongs in `MASK_ENTITY_TYPES` in `app.py`. Otherwise, it will be replaced.
+1. Add a recognizer in `recognizers/business_recognizers.py` or `recognizers/singapore_recognizers.py`.
+2. Add validation and normalization in `entity_rules.py`.
+3. Add the entity to `TARGET_ENTITIES` in `result_formatter.py`.
+4. Decide whether it should be masked in `MASK_ENTITY_TYPES` in `app.py`.
 5. Rebuild Docker and test with positive and negative examples.
 
-## Useful commands
+## Useful Commands
 
-Rebuild after code or rule changes:
+Rebuild backend:
 
 ```powershell
 docker compose up -d --build
 ```
 
-View service logs:
+View logs:
 
 ```powershell
 docker compose logs -f
 ```
 
-Stop the service:
+Stop backend:
 
 ```powershell
 docker compose down
 ```
 
-Check installed Python dependencies:
+Check Python dependencies:
 
 ```powershell
 python -m pip check
 ```
 
-## Files excluded from Git
+## Important Limitations
 
-The virtual environments, source PDFs, generated JSON results, caches, local environment files, and editor settings are excluded through `.gitignore`. Do not commit documents containing real private information.
+- Text-based PDFs are supported directly.
+- Scanned/image PDFs need OCR before this project can read them.
+- New document layouts may need additional recognizers or validation rules.
+- The Azure test API currently has no built-in API key check.
+- Do not commit real private PDFs or generated output containing private information.
 
-## Important limitation
-
-The current rules were verified against the seven supplied PDFs. Text-based PDFs are supported directly. Scanned image PDFs require OCR before this pipeline can analyze them. New layouts or identifier formats should be added as test examples and handled with new recognizer and validation rules.

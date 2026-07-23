@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Presidio Singapore Review UI</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="workspace">
+      <aside class="panel input-panel">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>Presidio Review</h1>
+            <p>Analyzer and anonymizer output viewer</p>
+          </div>
+        </div>
+
+        <label class="field-label" for="apiBase">API base URL</label>
+        <input id="apiBase" class="text-input" type="url">
+
+        <div class="segmented" role="tablist" aria-label="Input type">
+          <button id="textMode" class="segment active" type="button">Text</button>
+          <button id="pdfMode" class="segment" type="button">PDF</button>
+        </div>
+
+        <section id="textInputBlock" class="input-block">
+          <label class="field-label" for="textInput">Input text</label>
+          <textarea id="textInput" spellcheck="false">Dear John Tan,
+
+Please contact john.tan@example.com or +65 9123 4567.
+Vehicle number: SMD4125Y.
+Bankruptcy case number: HC/B/668/2024.</textarea>
+        </section>
+
+        <section id="pdfInputBlock" class="input-block hidden">
+          <label class="field-label" for="pdfInput">PDF file</label>
+          <input id="pdfInput" class="file-input" type="file" accept="application/pdf,.pdf">
+          <label class="field-label" for="emailMessageId">Email message id</label>
+          <input id="emailMessageId" class="text-input" type="number" min="1" value="1">
+        </section>
+
+        <div class="actions">
+          <button id="runAnalyzer" class="primary" type="button">Run Analyzer</button>
+          <button id="runAnonymizer" class="secondary" type="button">Run Anonymizer</button>
+          <button id="runBoth" class="secondary" type="button">Run Both</button>
+        </div>
+
+        <div id="status" class="status">Ready</div>
+      </aside>
+
+      <section class="results">
+        <div class="result-grid">
+          <article class="panel result-panel">
+            <div class="panel-heading">
+              <h2>Analyzer Output</h2>
+              <button id="copyAnalyzer" class="icon-button" type="button" title="Copy analyzer JSON">Copy</button>
+            </div>
+            <div id="analyzerSummary" class="summary-row"></div>
+            <div id="highlightedSource" class="highlight-box muted">Run analyzer to see detected entities.</div>
+            <pre id="analyzerJson" class="json-box"></pre>
+          </article>
+
+          <article class="panel result-panel">
+            <div class="panel-heading">
+              <h2>Anonymizer Output</h2>
+              <button id="copyAnonymizer" class="icon-button" type="button" title="Copy anonymizer JSON">Copy</button>
+            </div>
+            <div id="anonymizerSummary" class="summary-row"></div>
+            <div id="highlightedAnonymized" class="highlight-box muted">Run anonymizer to see replaced and masked text.</div>
+            <pre id="anonymizerJson" class="json-box"></pre>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
