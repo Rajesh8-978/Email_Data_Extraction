@@ -26,6 +26,11 @@ const entityLabels = {
 };
 
 const entityOrder = [
+  "ORGANIZATION",
+  "JOB_TITLE",
+  "EMAIL_DATE",
+  "DATE_TIME",
+  "URL",
   "BANKRUPTCY_NUMBER",
   "BANKRUPT_NAME",
   "PERSON",
@@ -39,11 +44,6 @@ const entityOrder = [
   "LOCATION",
   "GOVERNMENT_AGENCY",
   "LAW_FIRM",
-  "ORGANIZATION",
-  "JOB_TITLE",
-  "EMAIL_DATE",
-  "DATE_TIME",
-  "URL",
 ];
 
 const els = {
@@ -106,7 +106,7 @@ async function runBoth() {
 }
 
 async function runAnalyzer() {
-  setStatus("Running analyzer...");
+  setStatus("Analysing data, please wait...", "working");
   try {
     const result = state.mode === "text"
       ? await postJson("/proxy/text/extracted-entities", textPayload())
@@ -121,7 +121,7 @@ async function runAnalyzer() {
 }
 
 async function runAnonymizer() {
-  setStatus("Running anonymizer...");
+  setStatus("Anonymizing data, please wait...", "working");
   try {
     const result = state.mode === "text"
       ? await postJson("/proxy/text/anonymized-text", textPayload())
@@ -325,7 +325,7 @@ function summaryChips(result) {
 }
 
 function showError(title, error, targetBox, jsonBox) {
-  setStatus(`${title}.`);
+  setStatus(`${title}.`, "error");
   const message = error instanceof Error ? error.message : String(error);
   targetBox.innerHTML = `<mark class="entity entity-error">${escapeHtml(message)}</mark>`;
   jsonBox.textContent = JSON.stringify({error: message}, null, 2);
@@ -343,8 +343,10 @@ function clearResults() {
   setStatus("Ready");
 }
 
-function setStatus(message) {
+function setStatus(message, type = "") {
   els.status.textContent = message;
+  els.status.classList.toggle("status-working", type === "working");
+  els.status.classList.toggle("status-error", type === "error");
 }
 
 function copyJson(value) {

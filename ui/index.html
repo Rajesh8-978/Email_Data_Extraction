@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Presidio Singapore Review UI</title>
+  <title>Data Extraction UI</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -13,13 +13,12 @@
         <div class="brand">
           <span class="brand-mark"></span>
           <div>
-            <h1>Presidio Review</h1>
-            <p>Analyzer and anonymizer output viewer</p>
+            <h1>Data Extraction</h1>
+            <p>Analyzer and anonymizer output viewer.</p>
           </div>
         </div>
 
-        <label class="field-label" for="apiBase">API base URL</label>
-        <input id="apiBase" class="text-input" type="url">
+        <input id="apiBase" type="hidden">
 
         <div class="segmented" role="tablist" aria-label="Input type">
           <button id="textMode" class="segment active" type="button">Text</button>
